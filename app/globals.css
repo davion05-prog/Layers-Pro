@@ -1154,3 +1154,128 @@ footer {
 .modal .quick-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
+
+.account-layout {
+  display: grid;
+  grid-template-columns: minmax(17rem, 2fr) minmax(29rem, 3fr);
+  min-height: 100dvh;
+}
+.account-brand {
+  position: relative;
+  background: var(--dark);
+  color: #f0f7ef;
+  padding: clamp(1.5rem, 5vw, 4rem);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  isolation: isolate;
+}
+.account-brand::after {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  content: "";
+  background: radial-gradient(ellipse at 100% 5%, #345b46, transparent 56%);
+}
+.account-brand > a {
+  align-self: flex-start;
+  color: inherit;
+}
+.account-brand-copy {
+  max-width: 21rem;
+  padding: 2rem 0 1rem;
+}
+.account-brand-copy p {
+  margin: 1.25rem 0 0;
+  font-size: clamp(1.65rem, 3vw, 2.85rem);
+  font-weight: 650;
+  line-height: 1.12;
+  letter-spacing: -0.045em;
+}
+.account-brand-icon,
+.account-card-icon {
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  color: #245640;
+  background: #dbedd8;
+  width: 3rem;
+  height: 3rem;
+}
+.account-main {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  max-width: none;
+  padding: clamp(1rem, 5vw, 4rem);
+  display: grid;
+  place-items: center;
+}
+.account-card {
+  width: min(100%, 30rem);
+  padding: clamp(1.25rem, 4vw, 2.5rem);
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 1.1rem;
+  box-shadow: 0 12px 42px #153b3010;
+  display: grid;
+  gap: 0.8rem;
+}
+.account-card h1 {
+  font-size: clamp(1.65rem, 4vw, 2.2rem);
+  font-weight: 750;
+  line-height: 1.18;
+  letter-spacing: -0.04em;
+  margin: 0;
+}
+.account-intro {
+  color: var(--muted);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.account-form {
+  margin-top: 0.35rem;
+}
+.account-form .field input {
+  min-height: 2.75rem;
+  font-size: 1rem;
+}
+.account-form .button {
+  margin-top: 0.25rem;
+}
+.account-resend {
+  display: grid;
+  gap: 0.5rem;
+  justify-items: start;
+}
+.account-resend .field {
+  justify-self: stretch;
+}
+.account-links {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 0.35rem;
+  justify-items: start;
+  padding-top: 0.85rem;
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+}
+.account-links a {
+  color: var(--green);
+  font-weight: 680;
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+@media (max-width: 760px) {
+  .account-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+  }
+  .account-brand-copy {
+    display: none;
+  }
+  .account-main {
+    align-items: start;
+    padding-top: 1.5rem;
+  }
+}

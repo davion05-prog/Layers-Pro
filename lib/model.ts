@@ -221,6 +221,17 @@ export const rowSchema = z.discriminatedUnion("type", [
 ]);
 export type Row = z.infer<typeof rowSchema>;
 export type Farm = Extract<Row, { type: "farm" }>;
+export const farmDefaults = {
+  name: "",
+  location: "",
+  currency: "KES",
+  timezone: "Africa/Nairobi",
+  traySize: 30,
+  lead: 7,
+  email: false,
+  push: false,
+  inApp: true,
+} satisfies Farm["data"];
 export type RowOf<T extends Row["type"]> = Extract<Row, { type: T }>;
 export type Operation = { id: string; row: Row; group?: string };
 export const operationSchema = z.object({

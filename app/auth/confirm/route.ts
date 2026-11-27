@@ -1,15 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
-import { configured, userClient } from "../../../lib/server";
+import { appOrigin, configured, userClient } from "../../../lib/server";
 
 export async function GET(req: NextRequest) {
-  const code = req.nextUrl.searchParams.get("code");
-  const hash = req.nextUrl.searchParams.get("token_hash");
+  const { searchParams } = req.nextUrl;
+  const code = searchParams.get("code");
+  const hash = searchParams.get("token_hash");
+  const origin = appOrigin(req);
+  const login = new URL("/login", origin);
+  const headers = {
+    "Cache-Control": "private, no-store",
+    "Referrer-Policy": "no-referrer",
+  };
+
   if (configured() && (code || hash)) {
     const client = await userClient();
-    const { error } = code
-      ? await client.auth.exchangeCodeForSession(code)
-      : await client.auth.verifyOtp({ token_hash: hash!, type: "email" });
-    if (!error) return NextResponse.redirect(new URL("/", req.url));
+    const result = hash
+      ? await client.auth.verifyOtp({ token_hash: hash, type: "email" })
+      : await client.auth.exchangeCodeForSession(code!);
+    if (!result.error && result.data.session) {
+      return NextResponse.redirect(new URL("/", origin), { headers });
+    }
   }
-  return NextResponse.redirect(new URL("/?auth=confirmation-failed", req.url));
+
+  const failed = Boolean(code || hash || searchParams.has("error"));
+  login.searchParams.set("confirmation", failed ? "failed" : "continue");
+  return NextResponse.redirect(login, { headers });
 }

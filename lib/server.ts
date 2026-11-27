@@ -42,9 +42,12 @@ export function serviceClient() {
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
 }
+export const appOrigin = (req: NextRequest) =>
+  process.env.APP_ORIGIN || req.nextUrl.origin;
+
 export function sameOrigin(req: NextRequest) {
   const origin = req.headers.get("origin");
-  const expected = process.env.APP_ORIGIN || req.nextUrl.origin;
+  const expected = appOrigin(req);
   return !origin || origin === expected;
 }
 export const response = (data: unknown, status = 200) =>

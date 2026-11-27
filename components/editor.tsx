@@ -7,6 +7,7 @@ import {
   categories,
   causes,
   defaultReferences,
+  farmDefaults,
   flockKey,
   population,
   rowsOf,
@@ -34,15 +35,7 @@ const titles = {
   schedule: "Schedule item",
 };
 const defaults = {
-  name: "",
-  location: "",
-  currency: "KES",
-  timezone: "Africa/Nairobi",
-  traySize: 30,
-  lead: 7,
-  email: false,
-  push: false,
-  inApp: true,
+  ...farmDefaults,
   feedStages: [] as References["feed"],
   vaccinesApproved: false,
   categories,
@@ -174,7 +167,11 @@ export function Editor({
         type="number"
         min={min === -Infinity ? undefined : min}
         step={step}
-        defaultValue={Number(old[key])}
+        defaultValue={
+          !existing && (key === "initial" || key === "capacity")
+            ? undefined
+            : Number(old[key])
+        }
         required
       />
     </Field>

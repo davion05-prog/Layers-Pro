@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { browserSubscription } from "../../../lib/push";
 import {
+  appOrigin,
   authenticated,
   configured,
   fail,
@@ -27,6 +28,22 @@ export async function POST(req: NextRequest) {
     return fail("Account access requires Supabase configuration", 503);
   const body = await req.json().catch(() => null);
   const client = await userClient();
+  const emailRedirectTo = new URL("/auth/confirm", appOrigin(req)).toString();
+  if (body?.action === "resend") {
+    const email = z.email().safeParse(body.email);
+    if (!email.success) return fail("Enter a valid email address");
+    const { error } = await client.auth.resend({
+      type: "signup",
+      email: email.data,
+      options: { emailRedirectTo },
+    });
+    if (error && error.code !== "user_not_found")
+      return response(
+        { error: error.message, code: error.code },
+        error.status || 400,
+      );
+    return response({ success: true });
+  }
   if (body?.action === "logout") {
     const { error } = await client.auth.signOut({ scope: "local" });
     return error ? fail(error.message) : response({ success: true });
@@ -52,19 +69,21 @@ export async function POST(req: NextRequest) {
     return error ? fail(error.message) : response({ success: true });
   }
   const parsed = credentials.safeParse(body);
-  if (!parsed.success || !["login", "register"].includes(body.action))
+  if (!parsed.success || !["login", "register"].includes(body?.action))
     return fail(
       "Enter a valid email and a password between 8 and 72 characters",
     );
-  const base = process.env.APP_ORIGIN || req.nextUrl.origin;
   const result =
     body.action === "register"
       ? await client.auth.signUp({
           ...parsed.data,
-          options: { emailRedirectTo: base + "/auth/confirm" },
+          options: { emailRedirectTo },
         })
       : await client.auth.signInWithPassword(parsed.data);
   if (result.error)
-    return fail(result.error.message, result.error.status || 400);
+    return response(
+      { error: result.error.message, code: result.error.code },
+      result.error.status || 400,
+    );
   return response({ verify: !result.data.session });
 }

@@ -1,6 +1,7 @@
-const CACHE = "layers-shell-v2";
+const CACHE = "layers-shell-v3";
+const WORKSPACES = ["/", "/demo"];
 const SHELL = ["/manifest.webmanifest", "/icon-192.png", "/icon-512.png"];
-async function rememberPage(cache, page) {
+async function rememberPage(cache, path, page) {
   const html = await page.clone().text();
   const assets = [
     ...new Set(
@@ -16,7 +17,7 @@ async function rememberPage(cache, page) {
       if (!(await cache.match(asset))) await cache.add(asset);
     }),
   );
-  await cache.put("/", page);
+  await cache.put(path, page);
 }
 self.addEventListener("install", (event) =>
   event.waitUntil(
@@ -24,7 +25,11 @@ self.addEventListener("install", (event) =>
       const cache = await caches.open(CACHE);
       await cache.addAll(SHELL);
       const page = await fetch("/", { cache: "reload" });
-      if (page.ok) await rememberPage(cache, page);
+      if (page.ok) await rememberPage(cache, "/", page);
+      try {
+        const demo = await fetch("/demo", { cache: "reload" });
+        if (demo.ok) await rememberPage(cache, "/demo", demo);
+      } catch {}
       await self.skipWaiting();
     })(),
   ),
@@ -48,17 +53,21 @@ self.addEventListener("fetch", (event) => {
     url.pathname.startsWith("/auth/")
   )
     return;
-  if (event.request.mode === "navigate" && url.pathname === "/") {
+  if (event.request.mode === "navigate" && WORKSPACES.includes(url.pathname)) {
     const network = fetch(event.request);
     event.waitUntil(
       network
         .then(async (result) => {
           if (result.ok)
-            await rememberPage(await caches.open(CACHE), result.clone());
+            await rememberPage(
+              await caches.open(CACHE),
+              url.pathname,
+              result.clone(),
+            );
         })
         .catch(() => {}),
     );
-    event.respondWith(network.catch(() => caches.match("/")));
+    event.respondWith(network.catch(() => caches.match(url.pathname)));
   } else if (
     url.pathname.startsWith("/_next/static/") ||
     SHELL.includes(url.pathname)

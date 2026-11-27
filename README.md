@@ -11,7 +11,7 @@ npm ci
 npm run dev
 ```
 
-Open [localhost:3000](http://localhost:3000). The workspace opens with two sample farms and a working demo. Demo records stay in this browser and are separate from authenticated accounts.
+Open [localhost:3000](http://localhost:3000). Log in or create an account to open your workspace. New accounts start with an empty farm setup form. To explore sample records, use [the separate demo](http://localhost:3000/demo). Its records stay in this browser and are separate from authenticated accounts.
 
 ```bash
 npm run typecheck
@@ -37,7 +37,7 @@ The stack uses Next.js, React, TypeScript, Tailwind CSS, Supabase Auth and Postg
 
 1. Create a Supabase project and apply `supabase/migrations/20261127170946_layers.sql` using the SQL editor or `supabase db push` against your linked project.
 2. Copy `.env.example` to `.env.local`. Set the Supabase URL, publishable key and server-only service-role key. Keep the service-role key out of the browser and Git.
-3. Under **Authentication → URL Configuration**, set the site URL and add the local and deployed `/auth/confirm` URLs as allowed redirects. Enable email confirmation. For confirmation from a different device, the Supabase email template can link to `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}`. Set up custom SMTP if Supabase’s default test-email restrictions prevent delivery to your test accounts.
+3. Under **Authentication → URL Configuration**, set the site URL to `https://layers-pro.vercel.app` and add `https://layers-pro.vercel.app/auth/confirm` to the allowed redirects. Add `http://localhost:3000/auth/confirm` separately if you develop locally. Enable email confirmation. For confirmation from a different device, the Supabase email template can link directly to `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}`. After updating the URL configuration, request a fresh email from the login or sign-up screen. Set up custom SMTP if Supabase’s default email restrictions prevent delivery.
 4. Set a short JWT lifetime appropriate to the deployment, such as 900 seconds. Supabase Auth handles password hashing, auth rate limits and refresh rotation. Next.js stores the session in HTTP-only, SameSite cookies, with Secure enabled in production. For a local HTTP test of the production build, set `ALLOW_INSECURE_COOKIES=true` locally only.
 5. For an admin account, first register and verify the user, then add its UUID through the Supabase SQL editor with `insert into public.layer_admins(owner) values ('USER_UUID');`. Admin screens expose account identity, counts and global references. Farm ledgers stay within their owner workspace.
 

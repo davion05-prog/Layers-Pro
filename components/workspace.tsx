@@ -1,12 +1,7 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
   ArrowDownToLine,
@@ -63,7 +58,10 @@ import { Editor, type EditorState } from "./editor";
 import { Graph, periods, production, ranges, type Period } from "./charts";
 import { Admin } from "./admin";
 import { Badge, Empty, Field, Logo, Modal, Panel, Table } from "./ui";
-import { session, useWorkspace } from "./workspace-store";
+import { useWorkspace } from "./workspace-store";
+import { session } from "../lib/session";
+import { WorkspaceLoading } from "./account-screen";
+import { FarmOnboarding } from "./farm-onboarding";
 
 const groups = [
   {
@@ -115,22 +113,17 @@ const download = (data: Blob, name: string) => {
 };
 const byLatest = (a: Row, b: Row) => b.date.localeCompare(a.date);
 
-export default function Workspace({ initialDay }: { initialDay: string }) {
-  const {
-    cache,
-    user,
-    configured,
-    ready,
-    online,
-    syncing,
-    failure,
-    load,
-    sync,
-    add,
-    logout,
-  } = useWorkspace(initialDay);
+export default function Workspace({
+  initialDay,
+  demo = false,
+}: {
+  initialDay: string;
+  demo?: boolean;
+}) {
+  const { cache, user, ready, online, syncing, failure, sync, add, logout } =
+    useWorkspace(initialDay, demo);
   const [tab, setTab] = useState<Tab>("Overview");
-  const [farm, setFarm] = useState("greenfield");
+  const [farm, setFarm] = useState(demo ? "greenfield" : "");
   const [flock, setFlock] = useState("");
   const [range, setRange] = useState(30);
   const [period, setPeriod] = useState<Period>("Daily");
@@ -138,10 +131,6 @@ export default function Workspace({ initialDay }: { initialDay: string }) {
   const [editor, setEditor] = useState<EditorState>();
   const [newEntry, setNewEntry] = useState(false);
   const [toast, setToast] = useState("");
-  const [auth, setAuth] = useState(false);
-  const [register, setRegister] = useState(false);
-  const [authBusy, setAuthBusy] = useState(false);
-  const [authMessage, setAuthMessage] = useState("");
   const [notifications, setNotifications] = useState(false);
   const [report, setReport] = useState<Report>("Egg production");
   const [comparison, setComparison] = useState("");
@@ -317,13 +306,10 @@ export default function Workspace({ initialDay }: { initialDay: string }) {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     if (params.get("tab") === "Schedules") setTab("Schedules");
-    if (params.has("auth")) {
-      setAuth(true);
-      setAuthMessage(
-        "The confirmation link expired or was opened in another browser.",
-      );
-    }
   }, []);
+  useEffect(() => {
+    if (ready && !demo && !user) window.location.replace("/login");
+  }, [ready, demo, user]);
   const navigate = (next: Tab) => {
     setTab(next);
     setDrawer(false);
@@ -360,40 +346,10 @@ export default function Workspace({ initialDay }: { initialDay: string }) {
     if (row.type === "farm") selectFarm(row.id);
     notice(user ? "Saved on this device" : "Record saved");
   }
-  async function submitAuth(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setAuthBusy(true);
-    setAuthMessage("");
-    const data = new FormData(event.currentTarget);
-    try {
-      const result = await session({
-        action: register ? "register" : "login",
-        email: data.get("email"),
-        password: data.get("password"),
-      });
-      if (result.verify)
-        setAuthMessage(
-          "Check your inbox to confirm your email address, then sign in.",
-        );
-      else {
-        setAuth(false);
-        selectFarm("");
-        await load();
-        notice("Account connected");
-      }
-    } catch (e) {
-      setAuthMessage((e as Error).message);
-    } finally {
-      setAuthBusy(false);
-    }
-  }
   async function accountAction(action: string) {
     try {
       if (action === "logout") {
         await logout();
-        selectFarm("greenfield");
-        navigate("Overview");
-        notice("Signed out");
       } else {
         await session({ action });
         await sync();
@@ -1427,9 +1383,9 @@ export default function Workspace({ initialDay }: { initialDay: string }) {
           {failure && (
             <p className="form-warning">
               {failure}{" "}
-              <button className="text-button" onClick={() => setAuth(true)}>
-                Open sign-in
-              </button>
+              <Link className="text-button" href="/login">
+                Open login
+              </Link>
             </p>
           )}
           <Table
@@ -1577,9 +1533,9 @@ export default function Workspace({ initialDay }: { initialDay: string }) {
                 </button>
               </>
             ) : (
-              <button className="button primary" onClick={() => setAuth(true)}>
-                Sign in or create an account
-              </button>
+              <Link className="button primary" href="/login">
+                Log in
+              </Link>
             )}
           </div>
         </Panel>
@@ -1619,6 +1575,18 @@ export default function Workspace({ initialDay }: { initialDay: string }) {
     year: "numeric",
     timeZone: "UTC",
   }).format(new Date(today));
+  if (!demo && (!ready || !user)) return <WorkspaceLoading />;
+  if (!demo && user && !farms.length) {
+    return (
+      <FarmOnboarding
+        date={today}
+        email={user.email}
+        syncError={failure}
+        save={save}
+        logout={logout}
+      />
+    );
+  }
   return (
     <div className="shell">
       {drawer && (
@@ -1688,7 +1656,9 @@ export default function Workspace({ initialDay }: { initialDay: string }) {
           </button>
           <button
             className="profile"
-            onClick={() => (user ? navigate("Settings") : setAuth(true))}
+            onClick={() =>
+              user ? navigate("Settings") : window.location.assign("/login")
+            }
           >
             <span className="avatar">
               {user ? user.email.slice(0, 2).toUpperCase() : "LP"}
@@ -1739,13 +1709,19 @@ export default function Workspace({ initialDay }: { initialDay: string }) {
                 noticeSchedules.length > 0 ||
                 noticeStock.length > 0) && <i />}
             </button>
-            <button
-              className="top-avatar"
-              aria-label="Account settings"
-              onClick={() => (user ? navigate("Settings") : setAuth(true))}
-            >
-              {user ? user.email.slice(0, 2).toUpperCase() : "LP"}
-            </button>
+            {user ? (
+              <button
+                className="top-avatar"
+                aria-label="Account settings"
+                onClick={() => navigate("Settings")}
+              >
+                {user.email.slice(0, 2).toUpperCase()}
+              </button>
+            ) : (
+              <Link className="button primary" href="/login">
+                Log in
+              </Link>
+            )}
           </div>
         </header>
         <main>
@@ -1814,11 +1790,11 @@ export default function Workspace({ initialDay }: { initialDay: string }) {
               </div>
             </div>
           )}
-          {ready && user && !farms.length && tab === "Overview" && (
+          {user && !farmFlocks.length && tab === "Overview" && (
             <Panel
-              title="Create your first farm"
-              description="Once you add a farm, you can register flocks and start logging production."
-              action={actionButton("Add farm", () => quick("farm"))}
+              title="Register your first flock"
+              description="Add your birds to start recording egg production and flock activity."
+              action={actionButton("Add flock", () => quick("flock"))}
             >
               <div />
             </Panel>
@@ -1851,64 +1827,6 @@ export default function Workspace({ initialDay }: { initialDay: string }) {
           close={() => setEditor(undefined)}
           save={save}
         />
-      )}
-      {auth && (
-        <Modal
-          title={register ? "Create an account" : "Sign in to Layers Pro"}
-          onClose={() => {
-            setAuth(false);
-            setAuthMessage("");
-          }}
-        >
-          <form className="editor-form" onSubmit={submitAuth}>
-            {!configured && (
-              <p className="form-warning">
-                This instance runs in demo mode. Connect Supabase to enable
-                accounts and cloud sync.
-              </p>
-            )}
-            <Field label="Email">
-              <input name="email" type="email" autoComplete="email" required />
-            </Field>
-            <Field label="Password">
-              <input
-                name="password"
-                type="password"
-                minLength={8}
-                maxLength={72}
-                autoComplete={register ? "new-password" : "current-password"}
-                required
-              />
-            </Field>
-            {authMessage && (
-              <p className="form-warning" role="status">
-                {authMessage}
-              </p>
-            )}
-            <button
-              className="button primary"
-              disabled={!configured || authBusy}
-            >
-              {authBusy
-                ? "Please wait…"
-                : register
-                  ? "Create account"
-                  : "Sign in"}
-            </button>
-            <button
-              type="button"
-              className="text-button"
-              onClick={() => {
-                setRegister(!register);
-                setAuthMessage("");
-              }}
-            >
-              {register
-                ? "Already have an account? Sign in"
-                : "New to Layers Pro? Create an account"}
-            </button>
-          </form>
-        </Modal>
       )}
       {notifications && (
         <Modal title="Notifications" onClose={() => setNotifications(false)}>

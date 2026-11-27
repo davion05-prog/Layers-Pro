@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { sample } from "../lib/demo";
+import { session, type User } from "../lib/session";
 import {
   daysBetween,
   dayNow,
@@ -16,38 +17,22 @@ import {
   type WorkspaceCache,
 } from "../lib/offline";
 
-export type User = { id: string; email: string };
 const DEMO = "demo";
 const empty: Snapshot = { rows: [], audits: [], notifications: [] };
+const emptyWorkspace: WorkspaceCache = { snapshot: empty, outbox: [] };
 const lastUserKey = "layers-pro-user";
 const sampleWorkspace = (day?: string): WorkspaceCache => ({
   snapshot: sample(day),
   outbox: [],
 });
-export async function session(body?: object) {
-  const res = await fetch(
-    "/api/session",
-    body
-      ? {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        }
-      : { cache: "no-store" },
-  );
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Could not access account");
-  return data;
-}
 
-export function useWorkspace(initialDay: string) {
+export function useWorkspace(initialDay: string, demo: boolean) {
   const [cache, setCache] = useState<WorkspaceCache>(() =>
-    sampleWorkspace(initialDay),
+    demo ? sampleWorkspace(initialDay) : emptyWorkspace,
   );
   const cacheRef = useRef(cache);
-  const owner = useRef(DEMO);
+  const owner = useRef<string | null>(demo ? DEMO : null);
   const [user, setUser] = useState<User | null>(null);
-  const [configured, setConfigured] = useState(false);
   const [ready, setReady] = useState(false);
   const [online, setOnline] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -73,7 +58,7 @@ export function useWorkspace(initialDay: string) {
   }, []);
   const sync = useCallback(async () => {
     const id = owner.current;
-    if (id === DEMO || syncingRef.current || !navigator.onLine) return;
+    if (!id || id === DEMO || syncingRef.current || !navigator.onLine) return;
     syncingRef.current = true;
     setSyncing(true);
     try {
@@ -133,29 +118,32 @@ export function useWorkspace(initialDay: string) {
   }, [persist, publish]);
   const load = useCallback(async () => {
     const sequence = ++accountRefresh.current;
+    if (demo) {
+      const stored = await readCache(DEMO).catch(() => undefined);
+      if (sequence !== accountRefresh.current) return;
+      publish(stored ?? sampleWorkspace());
+      setReady(true);
+      return;
+    }
+
     let account: User | null = null;
     let active = false;
     try {
       const data = await session();
-      setConfigured(data.configured);
       account = data.user;
       active = Boolean(account);
-      if (!account) {
-        // Keep a locally signed-in workspace available when the network is
-        // working but the session needs reauthentication to flush its outbox.
-        const local = localStorage.getItem(lastUserKey);
-        if (data.configured && local) account = JSON.parse(local);
-      }
     } catch {
-      const local = localStorage.getItem(lastUserKey);
-      if (local) {
-        account = JSON.parse(local);
-        setConfigured(true);
-      }
+      // Open the last workspace only when the session service cannot be
+      // reached. An explicit signed-out response goes to the login page.
+      try {
+        const local = localStorage.getItem(lastUserKey);
+        if (local) account = JSON.parse(local);
+      } catch {}
     }
-    const id = account?.id || DEMO;
-    await persist(async () => {
-      let stored = await readCache(id).catch(() => undefined);
+
+    const id = account?.id ?? null;
+    const needsInitialSync = await persist(async () => {
+      let stored = id ? await readCache(id).catch(() => undefined) : undefined;
       if (
         account &&
         !active &&
@@ -164,7 +152,7 @@ export function useWorkspace(initialDay: string) {
       ) {
         stored = stored ? { ...stored, snapshot: empty } : undefined;
       }
-      if (sequence !== accountRefresh.current) return;
+      if (sequence !== accountRefresh.current) return false;
       if (owner.current !== id) rejected.current.clear();
       owner.current = id;
       setUser(account);
@@ -173,16 +161,22 @@ export function useWorkspace(initialDay: string) {
           ? "Sign in again to resume sync."
           : "",
       );
-      publish(
-        stored ??
-          (account ? { snapshot: empty, outbox: [] } : sampleWorkspace()),
-      );
-      if (active && account)
-        localStorage.setItem(lastUserKey, JSON.stringify(account));
-      setReady(true);
+      publish(stored ?? emptyWorkspace);
+      if (active && account) {
+        try {
+          localStorage.setItem(lastUserKey, JSON.stringify(account));
+        } catch {}
+      }
+      return active && !stored;
     });
-    if (active) void sync();
-  }, [persist, publish, sync]);
+
+    if (sequence !== accountRefresh.current) return;
+    if (active) {
+      const refresh = sync();
+      if (needsInitialSync) await refresh;
+    }
+    if (sequence === accountRefresh.current) setReady(true);
+  }, [demo, persist, publish, sync]);
 
   useEffect(() => {
     setOnline(navigator.onLine);
@@ -211,6 +205,7 @@ export function useWorkspace(initialDay: string) {
 
   async function add(row: Row, previous?: Row, companion?: Row) {
     const id = owner.current;
+    if (!id) throw new Error("Log in before saving farm records.");
     await persist(async () => {
       if (owner.current !== id) throw new Error("The current account changed");
       const current =
@@ -274,20 +269,19 @@ export function useWorkspace(initialDay: string) {
     await session({ action: "logout" });
     const id = owner.current;
     ++accountRefresh.current;
-    owner.current = DEMO;
-    await persist(() => clearCache(id)).catch(() => undefined);
+    owner.current = null;
+    if (id && id !== DEMO)
+      await persist(() => clearCache(id)).catch(() => undefined);
     localStorage.removeItem(lastUserKey);
-    await load();
+    window.location.replace("/login");
   }
   return {
     cache,
     user,
-    configured,
     ready,
     online,
     syncing,
     failure,
-    load,
     sync,
     add,
     logout,
