@@ -57,11 +57,29 @@ export const response = (data: unknown, status = 200) =>
   });
 export const fail = (error: string, status = 400) =>
   response({ error }, status);
-export async function authenticated() {
+export async function sessionIdentity() {
   if (!configured()) return null;
   const client = await userClient();
   const { data } = await client.auth.getUser();
-  return data.user ? { client, user: data.user } : null;
+  if (!data.user) return null;
+  const [session, assurance] = await Promise.all([
+    client.rpc("layer_session_valid"),
+    client.auth.mfa.getAuthenticatorAssuranceLevel(),
+  ]);
+  if (session.error || !session.data || assurance.error) return null;
+  return {
+    client,
+    user: data.user,
+    mfaRequired:
+      assurance.data.nextLevel === "aal2" &&
+      assurance.data.currentLevel !== "aal2",
+    assurance: assurance.data.currentLevel,
+  };
+}
+
+export async function authenticated() {
+  const identity = await sessionIdentity();
+  return identity && !identity.mfaRequired ? identity : null;
 }
 export function withReferences(data: Snapshot): Snapshot {
   return { ...data, references: { ...defaultReferences, ...data.references } };

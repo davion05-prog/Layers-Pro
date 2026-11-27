@@ -71,6 +71,15 @@ The job refreshes in-app reminders and processes account deletion after the 30-d
 
 Draft pre-lay vaccine reminders use the [Kenchic Layer/Kenbro vaccination windows](https://www.kenchic.com/health-management/). The first day of each published window is used as the draft reminder date. The recurring laying-period item is a configurable review placeholder. Have the farm veterinarian review the template before enabling vaccination notifications.
 
+## Farmer security and operational workflows
+
+- Account email addresses are normalized and unique. Reset and verification requests use the live callback and rate limits. When using custom templates on Supabase, verify both signup and password-recovery links with a test mailbox before opening registration to farmers. A custom recovery template can use `{{ .SiteURL }}/auth/confirm?type=recovery&token_hash={{ .TokenHash }}`.
+- Farmers can set up an authenticator under **Settings → Account security**. After enrolling, farm data requires a verified second factor. The existing administrative API requires MFA. The standalone admin interface is deferred.
+- Account security shows recent events and highlights unfamiliar-device sign-ins. Sign out all devices revokes online sessions. Clear device data also removes downloaded IndexedDB records and pending entries after confirmation.
+- **Daily entry** supports reviewed batches. **Sync status** opens the offline queue, where rejected entries can be edited or retried individually. The grouped task list replaces the calendar.
+- Opening feed stock is separate from purchases. The inventory reorder suggestion uses seven-day usage and supplier lead time. Recorded egg sales keep dated payments and outstanding customer balances.
+- Run `npm test` before deployment. GitHub Actions runs the tenant isolation, authorization and build checks on pushes and pull requests.
+
 ## Demo walkthrough
 
 - Use the farm picker and flock selector to change scope.

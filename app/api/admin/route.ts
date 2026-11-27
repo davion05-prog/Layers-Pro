@@ -11,7 +11,12 @@ import {
 
 async function admin() {
   const auth = await authenticated();
-  if (!auth || !process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
+  if (
+    !auth ||
+    auth.assurance !== "aal2" ||
+    !process.env.SUPABASE_SERVICE_ROLE_KEY
+  )
+    return null;
   const client = serviceClient();
   const { data } = await client
     .from("layer_admins")

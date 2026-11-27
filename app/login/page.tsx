@@ -6,14 +6,15 @@ export const metadata = { title: "Log in | Layers Pro" };
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ confirmation?: string }>;
+  searchParams: Promise<{ confirmation?: string; step?: string }>;
 }) {
-  const { confirmation } = await searchParams;
+  const { confirmation, step } = await searchParams;
   return (
     <AccountScreen
       mode="login"
       configured={configured()}
       confirmation={confirmation}
+      step={step}
     />
   );
 }

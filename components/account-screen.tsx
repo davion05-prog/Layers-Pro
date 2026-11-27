@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Egg, House, ShieldCheck } from "lucide-react";
-import { SessionError, session } from "../lib/session";
+import { deviceId, SessionError, session } from "../lib/session";
+import { PasswordField } from "./password-field";
+import { MfaChallenge } from "./mfa-challenge";
 import { Field, Logo } from "./ui";
 
 export function AccountFrame({ children }: { children: ReactNode }) {
@@ -31,10 +33,12 @@ export function AccountScreen({
   mode,
   configured,
   confirmation,
+  step,
 }: {
   mode: "login" | "signup";
   configured: boolean;
   confirmation?: string;
+  step?: string;
 }) {
   const signup = mode === "signup";
   const [email, setEmail] = useState("");
@@ -46,11 +50,13 @@ export function AccountScreen({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const confirmationNotice =
-    confirmation === "failed"
-      ? "This link could not sign you in. Try logging in first. If your email is still unconfirmed, request a new link below."
-      : confirmation === "continue"
-        ? "Log in to continue. If your email is still unconfirmed, request a new link below."
-        : "";
+    confirmation === "password-updated"
+      ? "Your password was updated. Log in with your new password."
+      : confirmation === "failed"
+        ? "This link could not sign you in. Try logging in first. If your email is still unconfirmed, request a new link below."
+        : confirmation === "continue"
+          ? "Log in to continue. If your email is still unconfirmed, request a new link below."
+          : "";
 
   useEffect(() => {
     // Some older Supabase emails return credentials or an error in the fragment.
@@ -80,12 +86,16 @@ export function AccountScreen({
         action: signup ? "register" : "login",
         email: email.trim(),
         password,
+        device: deviceId(),
       });
       if (result.verify) {
         setCheckInbox(true);
         setShowResend(true);
       } else {
-        window.location.replace("/");
+        try {
+          localStorage.removeItem("layers-pro-logout-pending");
+        } catch {}
+        window.location.replace(result.mfaRequired ? "/login?step=mfa" : "/");
       }
     } catch (cause) {
       if (cause instanceof SessionError && cause.code === "email_not_confirmed")
@@ -120,6 +130,21 @@ export function AccountScreen({
     } finally {
       setBusy(false);
     }
+  }
+
+  if (!signup && step === "mfa") {
+    return (
+      <AccountFrame>
+        <h1>Verify your sign-in</h1>
+        <p className="account-intro">
+          Enter the current code from your authenticator app.
+        </p>
+        <MfaChallenge complete={() => window.location.replace("/")} />
+        <div className="account-links">
+          <Link href="/login">Back to login</Link>
+        </div>
+      </AccountFrame>
+    );
   }
 
   const emailField = (
@@ -174,27 +199,21 @@ export function AccountScreen({
       {!checkInbox && (
         <form className="editor-form account-form" onSubmit={submit}>
           {emailField}
-          <Field label="Password">
-            <input
-              name="password"
-              type="password"
-              minLength={8}
-              maxLength={72}
-              autoComplete={signup ? "new-password" : "current-password"}
-              required
-            />
-          </Field>
+          <PasswordField
+            label="Password"
+            autoComplete={signup ? "new-password" : "current-password"}
+          />
           {signup && (
-            <Field label="Confirm password">
-              <input
-                name="confirmPassword"
-                type="password"
-                minLength={8}
-                maxLength={72}
-                autoComplete="new-password"
-                required
-              />
-            </Field>
+            <PasswordField
+              label="Confirm password"
+              name="confirmPassword"
+              autoComplete="new-password"
+            />
+          )}
+          {!signup && (
+            <Link className="text-button recovery-link" href="/forgot-password">
+              Forgot password?
+            </Link>
           )}
           <button className="button primary" disabled={!configured || busy}>
             {busy ? "Please wait…" : signup ? "Create account" : "Log in"}
@@ -238,15 +257,17 @@ export function AccountScreen({
   );
 }
 
-export function WorkspaceLoading() {
+export function WorkspaceLoading({ offline = false }: { offline?: boolean }) {
   return (
     <AccountFrame>
       <div className="account-card-icon">
         <House size={23} aria-hidden="true" />
       </div>
-      <h1>Opening your workspace</h1>
+      <h1>{offline ? "Connect to log in" : "Opening your workspace"}</h1>
       <p className="account-intro" role="status">
-        Checking your session and farm records.
+        {offline
+          ? "There is no available workspace on this device."
+          : "Checking your session and farm records."}
       </p>
       <div className="account-links">
         <Link href="/login">Go to log in</Link>

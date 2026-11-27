@@ -124,6 +124,7 @@ export async function GET(req: NextRequest) {
         .filter((a) => a.deletion_at && Date.parse(a.deletion_at) <= Date.now())
         .map((a) => a.owner),
     );
+    await db.rpc("layer_security_cleanup");
     const deletion = await db.rpc("layer_purge_expired", { max_accounts: 100 });
     let errors = deletion.error ? 1 : 0;
     const removed = deletion.error ? 0 : Number(deletion.data);
@@ -233,14 +234,12 @@ export async function GET(req: NextRequest) {
           if (error) errors++;
         }
         for (const reminder of current) {
-          const { error } = await db
-            .from("layer_notifications")
-            .upsert({
-              owner,
-              id: reminder.id,
-              farm_id: reminder.farmId,
-              message: reminder.message,
-            });
+          const { error } = await db.from("layer_notifications").upsert({
+            owner,
+            id: reminder.id,
+            farm_id: reminder.farmId,
+            message: reminder.message,
+          });
           if (error) errors++;
           else reminders++;
         }

@@ -55,6 +55,9 @@ const defaults = {
   stage: "",
   bag: 50,
   threshold: 50,
+  supplierDays: 3,
+  openingKg: 0,
+  openingCost: 0,
   product: "",
   kg: 0,
   category: "",
@@ -391,6 +394,7 @@ export function Editor({
         stage: s("stage"),
         bag: n("bag"),
         threshold: n("threshold"),
+        supplierDays: n("supplierDays"),
       };
     else if (type === "stock") {
       const kg =
@@ -400,7 +404,7 @@ export function Editor({
         flock: kind === "Consumption" ? selected?.id : selectedFlock,
         kg,
         kind,
-        cost: kind === "Purchase" ? n("cost") : 0,
+        cost: kind === "Purchase" || kind === "Opening balance" ? n("cost") : 0,
         notes: s("notes"),
       };
       const before = rows.filter((r) => r.id !== existing?.id);
@@ -434,6 +438,25 @@ export function Editor({
         cost: n("cost"),
         notes: s("notes"),
       };
+    if (type === "product" && !existing && n("openingKg") > 0) {
+      const opening = rowSchema.safeParse({
+        id: crypto.randomUUID(),
+        farmId,
+        type: "stock",
+        date,
+        data: {
+          product: id,
+          flock: "",
+          kind: "Opening balance",
+          kg: n("openingKg"),
+          cost: n("openingCost"),
+          notes: "",
+        },
+      });
+      if (!opening.success)
+        return setError("Enter a valid opening stock quantity and value.");
+      companion = opening.data;
+    }
     const parsed = rowSchema.safeParse({
       id,
       farmId,
@@ -747,7 +770,19 @@ export function Editor({
             <div className="form-row">
               {num("Bag size (kg)", "bag", 0.01, ".01")}
               {num("Low-stock threshold (kg)", "threshold", 0, ".01")}
+              {num("Supplier lead time (days)", "supplierDays", 0)}
             </div>
+            {!existing && (
+              <div className="form-row">
+                {num("Feed already on hand (kg)", "openingKg", 0, ".01")}
+                {num(
+                  "Value of opening stock (optional)",
+                  "openingCost",
+                  0,
+                  ".01",
+                )}
+              </div>
+            )}
           </>
         )}
         {type === "stock" && (
@@ -767,7 +802,12 @@ export function Editor({
               </select>
             </Field>
             {dateInput}
-            {kindSelect(["Consumption", "Purchase", "Adjustment"])}
+            {kindSelect([
+              "Consumption",
+              "Purchase",
+              "Adjustment",
+              "Opening balance",
+            ])}
             {flockSelect(kind === "Consumption")}
             <div className="form-row">
               <Field label="Unit">
@@ -793,8 +833,15 @@ export function Editor({
                 />
               </Field>
             </div>
-            {kind === "Purchase" &&
-              num("Total purchase cost", "cost", 0, ".01")}
+            {(kind === "Purchase" || kind === "Opening balance") &&
+              num(
+                kind === "Opening balance"
+                  ? "Opening stock value (optional)"
+                  : "Total purchase cost",
+                "cost",
+                0,
+                ".01",
+              )}
             {kind === "Adjustment" ? (
               <Field label="Reason">
                 <textarea name="notes" defaultValue={old.notes} required />

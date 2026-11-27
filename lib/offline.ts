@@ -1,6 +1,10 @@
 import type { Operation, Snapshot } from "./model";
 
-export type WorkspaceCache = { snapshot: Snapshot; outbox: Operation[] };
+export type WorkspaceCache = {
+  snapshot: Snapshot;
+  outbox: Operation[];
+  rejected?: Record<string, string>;
+};
 const DB = "layers-pro";
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {

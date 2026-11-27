@@ -171,6 +171,7 @@ export const rowSchema = z.discriminatedUnion("type", [
       stage: label,
       bag: amount.positive(),
       threshold: amount,
+      supplierDays: count.max(90).optional(),
     }),
   ),
   record(
@@ -179,7 +180,12 @@ export const rowSchema = z.discriminatedUnion("type", [
       .object({
         product: reference,
         flock: reference.or(z.literal("")),
-        kind: z.enum(["Purchase", "Consumption", "Adjustment"]),
+        kind: z.enum([
+          "Purchase",
+          "Consumption",
+          "Adjustment",
+          "Opening balance",
+        ]),
         kg: z.number().min(-1_000_000).max(1_000_000),
         cost: amount,
         notes: note,
@@ -194,14 +200,35 @@ export const rowSchema = z.discriminatedUnion("type", [
   ),
   record(
     "money",
-    z.object({
-      flock: reference.or(z.literal("")),
-      kind: z.enum(["Income", "Expense"]),
-      category: label,
-      amount: amount.positive(),
-      reference: note,
-      notes: note,
-    }),
+    z
+      .object({
+        flock: reference.or(z.literal("")),
+        kind: z.enum(["Income", "Expense"]),
+        category: label,
+        amount: amount.positive(),
+        sale: z
+          .object({
+            customer: label,
+            trays: amount.positive(),
+            pricePerTray: amount.positive(),
+            payments: z
+              .array(
+                z.object({ id: z.uuid(), date, amount: amount.positive() }),
+              )
+              .max(100),
+          })
+          .optional(),
+        reference: note,
+        notes: note,
+      })
+      .refine(
+        ({ sale, amount, kind }) =>
+          !sale ||
+          (kind === "Income" &&
+            Math.abs(sale.trays * sale.pricePerTray - amount) < 0.0051 &&
+            sale.payments.reduce((n, p) => n + p.amount, 0) <= amount + 0.0001),
+        "Sale payments cannot exceed the sale total",
+      ),
   ),
   record(
     "schedule",
@@ -358,7 +385,7 @@ export function inventory(
   let averageCost = 0;
   let usage = 0;
   for (const { data, date } of items) {
-    if (data.kind === "Purchase") {
+    if (data.kind === "Purchase" || data.kind === "Opening balance") {
       const prior = Math.max(0, units);
       averageCost = (prior * averageCost + data.cost) / (prior + data.kg);
       units += data.kg;
@@ -373,6 +400,16 @@ export function inventory(
     usage: usage / 7,
     remaining: usage ? (Math.max(0, units) * 7) / usage : null,
     value: Math.max(0, units) * averageCost,
+    reorderDate: usage
+      ? addDays(
+          today,
+          Math.max(
+            0,
+            Math.floor((Math.max(0, units) * 7) / usage) -
+              (product.data.supplierDays ?? 3),
+          ),
+        )
+      : null,
   };
 }
 export function financialRows(rows: Row[]): RowOf<"money">[] {

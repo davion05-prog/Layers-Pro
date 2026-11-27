@@ -25,7 +25,6 @@ import {
   Plus,
   RefreshCw,
   Settings,
-  ShieldCheck,
   Syringe,
   Wallet,
   Wheat,
@@ -56,7 +55,11 @@ import {
 import { csv, reportData, reports, type Report } from "../lib/reports";
 import { Editor, type EditorState } from "./editor";
 import { Graph, periods, production, ranges, type Period } from "./charts";
-import { Admin } from "./admin";
+import { BatchEntry } from "./batch-entry";
+import { SalesEntry } from "./sales-entry";
+import { layingAlerts } from "../lib/production-alerts";
+import { SecurityPanel } from "./security-panel";
+import { SecurityNotice } from "./security-notice";
 import { Badge, Empty, Field, Logo, Modal, Panel, Table } from "./ui";
 import { useWorkspace } from "./workspace-store";
 import { session } from "../lib/session";
@@ -83,13 +86,10 @@ const groups = [
   },
   {
     title: "PREFERENCES",
-    links: [
-      { name: "Sync & audit", icon: Cloud },
-      { name: "Settings", icon: Settings },
-    ],
+    links: [{ name: "Settings", icon: Settings }],
   },
 ] as const;
-type Tab = (typeof groups)[number]["links"][number]["name"] | "Admin";
+type Tab = (typeof groups)[number]["links"][number]["name"] | "Sync & audit";
 const tabDescriptions: Record<Tab, string> = {
   Overview: "Production, flock health and the tasks that need your attention.",
   "Daily entry": "Log collections, bird movements and feed use as they happen.",
@@ -100,7 +100,6 @@ const tabDescriptions: Record<Tab, string> = {
   Reports: "Review the records behind your farm’s performance.",
   "Sync & audit": "Review unsynced entries, flags and changes to your records.",
   Settings: "Manage farms, account preferences and notification channels.",
-  Admin: "Manage platform accounts and shared reference data.",
 };
 const scheduleIcons = { Vaccination: Syringe, "Feed change": Wheat };
 const download = (data: Blob, name: string) => {
@@ -120,8 +119,19 @@ export default function Workspace({
   initialDay: string;
   demo?: boolean;
 }) {
-  const { cache, user, ready, online, syncing, failure, sync, add, logout } =
-    useWorkspace(initialDay, demo);
+  const {
+    cache,
+    user,
+    ready,
+    online,
+    syncing,
+    failure,
+    sync,
+    add,
+    addBatch,
+    logout,
+    mfaRequired,
+  } = useWorkspace(initialDay, demo);
   const [tab, setTab] = useState<Tab>("Overview");
   const [farm, setFarm] = useState(demo ? "greenfield" : "");
   const [flock, setFlock] = useState("");
@@ -129,14 +139,13 @@ export default function Workspace({
   const [period, setPeriod] = useState<Period>("Daily");
   const [drawer, setDrawer] = useState(false);
   const [editor, setEditor] = useState<EditorState>();
-  const [newEntry, setNewEntry] = useState(false);
+  const [saleEditor, setSaleEditor] = useState<true | RowOf<"money">>();
+  const [clearConfirm, setClearConfirm] = useState(false);
   const [toast, setToast] = useState("");
   const [notifications, setNotifications] = useState(false);
   const [report, setReport] = useState<Report>("Egg production");
   const [comparison, setComparison] = useState("");
   const [scheduleKind, setScheduleKind] = useState("All tasks");
-  const [scheduleView, setScheduleView] = useState("List");
-  const [monthOffset, setMonthOffset] = useState(0);
   const [showHistory, setShowHistory] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [auditRecord, setAuditRecord] = useState<{
@@ -227,7 +236,15 @@ export default function Workspace({
     product,
     ...inventory(scoped, product, today),
   }));
-  const low = stocks.filter((s) => s.units <= s.product.data.threshold);
+  const low = stocks.filter(
+    (s) =>
+      s.units <= s.product.data.threshold ||
+      (s.reorderDate !== null && s.reorderDate <= today),
+  );
+  const layingDrops = layingAlerts(scoped, activeFlocks, today);
+  const sales = rowsOf(scoped, "money").filter(
+    (r) => r.data.sale && (!flock || r.data.flock === flock),
+  );
   const schedules = scheduleRows(scoped, today, refs).filter(
     (r) => !flock || r.data.flock === flock,
   );
@@ -308,8 +325,9 @@ export default function Workspace({
     if (params.get("tab") === "Schedules") setTab("Schedules");
   }, []);
   useEffect(() => {
-    if (ready && !demo && !user) window.location.replace("/login");
-  }, [ready, demo, user]);
+    if (ready && online && !demo && !user)
+      window.location.replace(mfaRequired ? "/login?step=mfa" : "/login");
+  }, [ready, online, demo, user, mfaRequired]);
   const navigate = (next: Tab) => {
     setTab(next);
     setDrawer(false);
@@ -329,6 +347,10 @@ export default function Workspace({
     setEditor({ type, existing, initial });
   }
   const edit = (r: Row) => {
+    if (r.type === "money" && r.data.sale) {
+      setSaleEditor(r);
+      return;
+    }
     const outgoing =
       r.type === "movement" && r.data.kind === "Transfer in" && r.data.transfer
         ? rowsOf(rows, "movement").find(
@@ -606,12 +628,42 @@ export default function Workspace({
         </div>
         <Panel
           title="Egg production"
-          description="Trays collected and hen-day laying rate"
-          action={chartToggle}
+          description="Trays collected and hen-day laying rate over the last 7 days"
+          action={
+            <button className="text-button" onClick={() => navigate("Reports")}>
+              Open reports
+            </button>
+          }
           className="production-panel"
         >
-          <Graph data={chartData} value="Trays collected" rate="Hen-day rate" />
+          <Graph
+            data={production(
+              scoped,
+              chartFlocks,
+              "Daily",
+              addDays(today, -6),
+              today,
+            )}
+            value="Trays collected"
+            rate="Hen-day rate"
+          />
         </Panel>
+        {Boolean(layingDrops.length) && (
+          <Panel title="Laying-rate alerts">
+            <Table
+              headers={["Flock", "Last entry", "Recent average", "Change"]}
+              rows={layingDrops.map((item) => [
+                item.flock.data.name,
+                fmt(item.current, 1) + "% · " + dateLabel(item.date),
+                fmt(item.average, 1) +
+                  "% across " +
+                  item.days +
+                  " recorded days",
+                fmt(item.current - item.average, 1) + " percentage points",
+              ])}
+            />
+          </Panel>
+        )}
         <div className="lower-grid">
           <Panel
             title="Upcoming tasks"
@@ -635,7 +687,7 @@ export default function Workspace({
           </Panel>
           <Panel
             title="Feed stock"
-            description="Products at or below their stock threshold"
+            description="Low stock and products due to reorder"
             action={
               <button
                 className="text-button"
@@ -658,6 +710,9 @@ export default function Workspace({
                         {fmt(s.units, 1)} kg remaining
                         {s.remaining !== null
                           ? " · " + fmt(s.remaining, 1) + " days left"
+                          : ""}
+                        {s.reorderDate
+                          ? " · Reorder " + dateLabel(s.reorderDate)
                           : ""}
                       </small>
                     </div>
@@ -714,7 +769,6 @@ export default function Workspace({
           className="quick-card"
           key={type}
           onClick={() => {
-            setNewEntry(false);
             quick(type);
           }}
         >
@@ -738,6 +792,14 @@ export default function Workspace({
       .sort(byLatest);
     return (
       <>
+        <BatchEntry
+          key={farmId}
+          farms={farms}
+          rows={rows}
+          today={today}
+          activeFarm={farmId}
+          save={addBatch}
+        />
         {entryChoices}
         <Panel
           title="Daily records"
@@ -915,44 +977,30 @@ export default function Workspace({
 
   function schedulesPage() {
     const selected = schedules.filter(
-      (r) =>
-        (scheduleKind === "All tasks" || r.data.kind === scheduleKind) &&
-        (showHistory ||
-          (r.data.status === "Pending" &&
-            status(r) !== "Before registration" &&
-            r.date >= addDays(today, -30))),
+      (r) => scheduleKind === "All tasks" || r.data.kind === scheduleKind,
     );
-    const now = new Date(today + "T00:00:00Z");
-    const month = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + monthOffset, 1),
-    );
-    const monthName = new Intl.DateTimeFormat("en-KE", {
-      month: "long",
-      year: "numeric",
-      timeZone: "UTC",
-    }).format(month);
-    const monthStart = month.toISOString().slice(0, 10);
-    const days = new Date(
-      Date.UTC(month.getUTCFullYear(), month.getUTCMonth() + 1, 0),
-    ).getUTCDate();
-    const gaps = (month.getUTCDay() + 6) % 7;
+    const groups = [
+      ["Overdue", selected.filter((r) => status(r) === "Overdue")],
+      [
+        "Due soon",
+        selected.filter((r) => ["Due soon", "Due today"].includes(status(r))),
+      ],
+      ["Upcoming", selected.filter((r) => status(r) === "Upcoming")],
+      ...(showHistory
+        ? [
+            [
+              "History",
+              selected.filter((r) =>
+                ["Done", "Skipped", "Before registration"].includes(status(r)),
+              ),
+            ],
+          ]
+        : []),
+    ] as [string, RowOf<"schedule">[]][];
     return (
       <Panel
         title="Flock schedules"
         description="Confirm draft vaccination dates with your farm veterinarian."
-        action={
-          <div className="segments">
-            {["List", "Calendar"].map((v) => (
-              <button
-                key={v}
-                aria-pressed={scheduleView === v}
-                onClick={() => setScheduleView(v)}
-              >
-                {v}
-              </button>
-            ))}
-          </div>
-        }
       >
         <div className="inline-filters">
           <select
@@ -969,88 +1017,46 @@ export default function Workspace({
               type="checkbox"
               checked={showHistory}
               onChange={(e) => setShowHistory(e.target.checked)}
-            />{" "}
-            Include completed and pre-registration tasks
+            />
+            Include completed, skipped, and pre-registration tasks
           </label>
         </div>
-        {scheduleView === "List" ? (
-          <Table
-            headers={["Due date", "Task", "Flock", "Status", ""]}
-            rows={selected.map((r) => [
-              dateLabel(r.date),
-              <span className="table-stack" key={r.id}>
-                <strong>{r.data.name}</strong>
-                <small>
-                  {r.data.kind}
-                  {r.data.notes ? " · " + r.data.notes : ""}
-                  {r.data.status === "Pending" && nextFeedShort(r)
-                    ? " · Check feed stock"
-                    : ""}
-                </small>
-              </span>,
-              flockName(r.data.flock),
-              taskStatus(r),
-              <div className="row-actions" key={r.id}>
-                {editButton(r)}
-                {r.data.status === "Pending" && (
-                  <button
-                    className="mini-button"
-                    onClick={() => open("schedule", "Complete", r)}
-                  >
-                    Log
-                  </button>
-                )}
-              </div>,
-            ])}
-          />
-        ) : (
-          <>
-            <div className="month-head">
-              <button
-                className="mini-button"
-                onClick={() => setMonthOffset((x) => x - 1)}
-              >
-                Previous
-              </button>
-              <strong>{monthName}</strong>
-              <button
-                className="mini-button"
-                onClick={() => setMonthOffset((x) => x + 1)}
-              >
-                Next
-              </button>
-            </div>
-            <div className="calendar">
-              {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-                <div key={d} className="calendar-label">
-                  {d}
-                </div>
-              ))}
-              {Array.from({ length: gaps }, (_, i) => (
-                <div key={"gap" + i} className="calendar-gap" />
-              ))}
-              {Array.from({ length: days }, (_, i) => {
-                const day = addDays(monthStart, i);
-                return (
-                  <div key={day} className={day === today ? "cal-today" : ""}>
-                    <strong>{i + 1}</strong>
-                    {selected
-                      .filter((r) => r.date === day)
-                      .map((r) => (
-                        <button
-                          onClick={() => edit(r)}
-                          key={r.id}
-                          title={r.data.name}
-                        >
-                          {r.data.name}
-                        </button>
-                      ))}
-                  </div>
-                );
-              })}
-            </div>
-          </>
-        )}
+        {groups.map(([title, entries]) => (
+          <section className="schedule-section" key={title}>
+            <h3>
+              {title} <Badge>{entries.length}</Badge>
+            </h3>
+            <Table
+              headers={["Due date", "Task", "Flock", "Status", ""]}
+              rows={entries.map((r) => [
+                dateLabel(r.date),
+                <span className="table-stack" key={r.id}>
+                  <strong>{r.data.name}</strong>
+                  <small>
+                    {r.data.kind}
+                    {r.data.notes ? " · " + r.data.notes : ""}
+                    {r.data.status === "Pending" && nextFeedShort(r)
+                      ? " · Check feed stock"
+                      : ""}
+                  </small>
+                </span>,
+                flockName(r.data.flock),
+                taskStatus(r),
+                <div className="row-actions" key={r.id}>
+                  {editButton(r)}
+                  {r.data.status === "Pending" && (
+                    <button
+                      className="mini-button"
+                      onClick={() => open("schedule", "Complete", r)}
+                    >
+                      Log
+                    </button>
+                  )}
+                </div>,
+              ])}
+            />
+          </section>
+        ))}
       </Panel>
     );
   }
@@ -1118,7 +1124,15 @@ export default function Workspace({
           action={actionButton("Add product", () => quick("product"), false)}
         >
           <Table
-            headers={["Product", "Stock", "Days left", "Value", "Status", ""]}
+            headers={[
+              "Product",
+              "Stock",
+              "Days left",
+              "Reorder by",
+              "Value",
+              "Status",
+              "",
+            ]}
             rows={stocks.map((s) => [
               <span key={s.product.id} className="table-stack">
                 <strong>{s.product.data.name}</strong>
@@ -1128,6 +1142,17 @@ export default function Workspace({
               </span>,
               fmt(s.units, 2) + " kg",
               s.remaining === null ? "—" : fmt(s.remaining, 1),
+              s.reorderDate ? (
+                <span key="reorder" className="table-stack">
+                  {dateLabel(s.reorderDate)}
+                  <small>
+                    {fmt(s.usage, 1)} kg/day ·{" "}
+                    {s.product.data.supplierDays ?? 3} days lead time
+                  </small>
+                </span>
+              ) : (
+                "—"
+              ),
               cash(
                 s.value,
                 farms.find((f) => f.id === s.product.farmId)?.data.currency,
@@ -1188,6 +1213,56 @@ export default function Workspace({
     });
     return (
       <>
+        <Panel
+          title="Egg sales and payments"
+          description="Cash received is shown for the selected period. Outstanding amounts are current balances."
+          action={actionButton("Record egg sale", () => setSaleEditor(true))}
+        >
+          <Table
+            headers={[
+              "Customer",
+              "Date",
+              "Trays",
+              "Per tray",
+              "Sale value",
+              "Received in period",
+              "Outstanding",
+              "Status",
+              "",
+            ]}
+            rows={sales.sort(byLatest).map((r) => {
+              const detail = r.data.sale!;
+              const paid = detail.payments.reduce(
+                (sum, p) => sum + p.amount,
+                0,
+              );
+              const received = detail.payments
+                .filter((p) => p.date >= start && p.date <= today)
+                .reduce((sum, p) => sum + p.amount, 0);
+              const outstanding = Math.max(
+                0,
+                Math.round((r.data.amount - paid) * 100) / 100,
+              );
+              const curr = farms.find((f) => f.id === r.farmId)?.data.currency;
+              return [
+                detail.customer,
+                dateLabel(r.date),
+                fmt(detail.trays, 2),
+                cash(detail.pricePerTray, curr),
+                cash(r.data.amount, curr),
+                cash(received, curr),
+                cash(outstanding, curr),
+                <Badge
+                  key="status"
+                  tone={outstanding === 0 ? "green" : paid ? "amber" : "red"}
+                >
+                  {outstanding === 0 ? "Paid" : paid ? "Part paid" : "Unpaid"}
+                </Badge>,
+                editButton(r, "Payments"),
+              ];
+            })}
+          />
+        </Panel>
         <div className="metric-grid three">
           {metric(
             Wallet,
@@ -1389,17 +1464,31 @@ export default function Workspace({
             </p>
           )}
           <Table
-            headers={["Date", "Type", "Farm", "Status", ""]}
+            headers={["Date", "Type", "Farm", "Status", "Actions"]}
             rows={cache.outbox
               .filter((x) => !farmId || x.row.farmId === farmId)
-              .map(({ row }) => [
+              .map(({ id, row }) => [
                 dateLabel(row.date),
                 row.type,
                 farmName(row.farmId),
-                <Badge key={row.id} tone="amber">
-                  Waiting to sync
-                </Badge>,
-                editButton(row, "Review"),
+                <div className="table-stack" key="status">
+                  <Badge tone={cache.rejected?.[id] ? "red" : "amber"}>
+                    {cache.rejected?.[id]
+                      ? "Needs attention"
+                      : "Saved on device"}
+                  </Badge>
+                  {cache.rejected?.[id] && <small>{cache.rejected[id]}</small>}
+                </div>,
+                <div className="row-actions" key="retry">
+                  {editButton(row, "Edit")}
+                  <button
+                    className="text-button"
+                    disabled={!online || syncing}
+                    onClick={() => void sync(id)}
+                  >
+                    Retry
+                  </button>
+                </div>,
               ])}
           />
         </Panel>
@@ -1539,6 +1628,19 @@ export default function Workspace({
             )}
           </div>
         </Panel>
+        {user && (
+          <SecurityPanel
+            online={online}
+            clearDevice={() => setClearConfirm(true)}
+            signOutAll={async () => {
+              try {
+                await logout(true);
+              } catch (cause) {
+                notice((cause as Error).message);
+              }
+            }}
+          />
+        )}
       </>
     );
   }
@@ -1552,11 +1654,10 @@ export default function Workspace({
     Reports: reportsPage,
     "Sync & audit": syncPage,
     Settings: settingsPage,
-    Admin: () => <Admin />,
   };
   const btn =
     tab === "Overview"
-      ? actionButton("New entry", () => setNewEntry(true))
+      ? actionButton("Daily entry", () => navigate("Daily entry"))
       : tab === "Flocks"
         ? actionButton("Add flock", () => quick("flock"))
         : tab === "Schedules"
@@ -1575,7 +1676,8 @@ export default function Workspace({
     year: "numeric",
     timeZone: "UTC",
   }).format(new Date(today));
-  if (!demo && (!ready || !user)) return <WorkspaceLoading />;
+  if (!demo && (!ready || !user))
+    return <WorkspaceLoading offline={ready && !online} />;
   if (!demo && user && !farms.length) {
     return (
       <FarmOnboarding
@@ -1639,16 +1741,6 @@ export default function Workspace({
               ))}
             </div>
           ))}
-          {cache.snapshot.admin && (
-            <div className="nav-group">
-              <button
-                className={tab === "Admin" ? "nav-active" : ""}
-                onClick={() => navigate("Admin")}
-              >
-                <ShieldCheck size={19} /> Admin
-              </button>
-            </div>
-          )}
         </nav>
         <div className="sidebar-bottom">
           <button className="sidebar-help" onClick={() => navigate("Settings")}>
@@ -1736,7 +1828,7 @@ export default function Workspace({
             </div>
             <div className="heading-action">{btn}</div>
           </div>
-          {tab !== "Admin" && (
+          {tab !== "Sync & audit" && (
             <div className="scope">
               <div className="scope-farm">
                 <span className="scope-icon">
@@ -1790,14 +1882,30 @@ export default function Workspace({
               </div>
             </div>
           )}
-          {user && !farmFlocks.length && tab === "Overview" && (
-            <Panel
-              title="Register your first flock"
-              description="Add your birds to start recording egg production and flock activity."
-              action={actionButton("Add flock", () => quick("flock"))}
-            >
-              <div />
-            </Panel>
+          {user &&
+            tab === "Overview" &&
+            (!farmFlocks.length || !products.length) && (
+              <Panel
+                title="Finish farm setup"
+                description="Enter the birds and feed you already have on site."
+              >
+                <div className="settings-actions">
+                  {!farmFlocks.length &&
+                    actionButton("Register first flock", () => quick("flock"))}
+                  {!products.length &&
+                    actionButton(
+                      "Add opening feed stock",
+                      () => quick("product"),
+                      false,
+                    )}
+                </div>
+              </Panel>
+            )}
+          {user && online && tab === "Overview" && (
+            <SecurityNotice
+              account={user.id}
+              settings={() => navigate("Settings")}
+            />
           )}
           {renders[tab]()}
           <footer>
@@ -1811,9 +1919,39 @@ export default function Workspace({
         </main>
       </div>
 
-      {newEntry && (
-        <Modal title="New entry" onClose={() => setNewEntry(false)}>
-          {entryChoices}
+      {saleEditor && (
+        <SalesEntry
+          farms={farms}
+          farmId={farmId}
+          today={today}
+          existing={saleEditor === true ? undefined : saleEditor}
+          save={save}
+          close={() => setSaleEditor(undefined)}
+        />
+      )}
+      {clearConfirm && (
+        <Modal
+          title="Clear farm records from this device"
+          onClose={() => setClearConfirm(false)}
+        >
+          <p>
+            {cache.outbox.length
+              ? `${cache.outbox.length} pending entries will be discarded.`
+              : "All downloaded records will be removed from this browser."}{" "}
+            Your synced records stay in your account.
+          </p>
+          <button
+            className="button danger"
+            onClick={async () => {
+              try {
+                await logout(false, true);
+              } catch (cause) {
+                notice((cause as Error).message);
+              }
+            }}
+          >
+            Clear device data and sign out
+          </button>
         </Modal>
       )}
       {editor && (
@@ -1853,7 +1991,11 @@ export default function Workspace({
                       <strong>{s.product.data.name}</strong>
                       <small>{fmt(s.units, 1)} kg remaining</small>
                     </div>
-                    <Badge tone="amber">Low stock</Badge>
+                    <Badge tone="amber">
+                      {s.units <= s.product.data.threshold
+                        ? "Low stock"
+                        : "Reorder feed"}
+                    </Badge>
                   </div>
                 ))}
             </div>
