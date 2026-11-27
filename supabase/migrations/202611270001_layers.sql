@@ -63,11 +63,11 @@ grant select on public.layer_records, public.layer_audit, public.layer_notificat
 
 create function public.layer_active() returns boolean
 language sql stable security definer set search_path = '' as $$
-  select auth.uid() is not null and not exists (
+  select exists (select 1 from auth.users where id=auth.uid()) and not exists (
     select 1 from public.layer_accounts where owner=auth.uid() and suspended
   )
 $$;
-revoke all on function public.layer_active() from public;
+revoke all on function public.layer_active() from public, anon, authenticated, service_role;
 grant execute on function public.layer_active() to authenticated;
 
 create policy layer_records_read on public.layer_records for select to authenticated using (owner = (select auth.uid()) and (select public.layer_active()));
@@ -166,7 +166,7 @@ begin
   end if;
 end $$;
 
-revoke all on function public.layer_snapshot(), public.layer_sync(jsonb), public.layer_account(text,jsonb) from public;
+revoke all on function public.layer_snapshot(), public.layer_sync(jsonb), public.layer_account(text,jsonb) from public, anon, authenticated, service_role;
 grant execute on function public.layer_snapshot(), public.layer_account(text,jsonb) to authenticated;
 create function public.layer_sync_for(account uuid, ops jsonb) returns jsonb
 language plpgsql security definer set search_path = '' as $$
@@ -174,7 +174,7 @@ begin
   perform set_config('request.jwt.claim.sub',account::text,true);
   return public.layer_sync(ops);
 end $$;
-revoke all on function public.layer_sync_for(uuid,jsonb) from public;
+revoke all on function public.layer_sync_for(uuid,jsonb) from public, anon, authenticated, service_role;
 grant execute on function public.layer_sync_for(uuid,jsonb) to service_role;
 
 create table public.layer_deliveries (
@@ -198,7 +198,7 @@ language sql stable security definer set search_path = '' as $$
     'suspended',(select count(*) from public.layer_accounts where suspended)
   )
 $$;
-revoke all on function public.layer_stats() from public;
+revoke all on function public.layer_stats() from public, anon, authenticated, service_role;
 grant execute on function public.layer_stats() to service_role;
 
 create function public.layer_admin_update(actor_id uuid, account_id uuid, suspend boolean) returns void
@@ -218,7 +218,7 @@ begin
     on conflict(key) do update set value=excluded.value;
   insert into public.layer_admin_audit(actor,action,target) values(actor_id,'update references','breeds, feed, vaccines');
 end $$;
-revoke all on function public.layer_admin_update(uuid,uuid,boolean), public.layer_reference_update(uuid,jsonb) from public;
+revoke all on function public.layer_admin_update(uuid,uuid,boolean), public.layer_reference_update(uuid,jsonb) from public, anon, authenticated, service_role;
 grant execute on function public.layer_admin_update(uuid,uuid,boolean), public.layer_reference_update(uuid,jsonb) to service_role;
 
 create function public.layer_purge_expired(max_accounts integer default 100) returns integer
@@ -237,5 +237,5 @@ begin
   get diagnostics total = row_count;
   return total;
 end $$;
-revoke all on function public.layer_purge_expired(integer) from public;
+revoke all on function public.layer_purge_expired(integer) from public, anon, authenticated, service_role;
 grant execute on function public.layer_purge_expired(integer) to service_role;
