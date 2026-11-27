@@ -2,23 +2,48 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { sample } from "../lib/demo";
-import { daysBetween, dayNow, type Audit, type Row, type Snapshot } from "../lib/model";
-import { clearCache, readCache, saveCache, type WorkspaceCache } from "../lib/offline";
+import {
+  daysBetween,
+  dayNow,
+  type Audit,
+  type Row,
+  type Snapshot,
+} from "../lib/model";
+import {
+  clearCache,
+  readCache,
+  saveCache,
+  type WorkspaceCache,
+} from "../lib/offline";
 
 export type User = { id: string; email: string };
 const DEMO = "demo";
 const empty: Snapshot = { rows: [], audits: [], notifications: [] };
 const lastUserKey = "layers-pro-user";
-const sampleWorkspace = (day?: string): WorkspaceCache => ({ snapshot: sample(day), outbox: [] });
+const sampleWorkspace = (day?: string): WorkspaceCache => ({
+  snapshot: sample(day),
+  outbox: [],
+});
 export async function session(body?: object) {
-  const res = await fetch("/api/session", body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : { cache: "no-store" });
+  const res = await fetch(
+    "/api/session",
+    body
+      ? {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }
+      : { cache: "no-store" },
+  );
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Could not access account");
   return data;
 }
 
 export function useWorkspace(initialDay: string) {
-  const [cache, setCache] = useState<WorkspaceCache>(() => sampleWorkspace(initialDay));
+  const [cache, setCache] = useState<WorkspaceCache>(() =>
+    sampleWorkspace(initialDay),
+  );
   const cacheRef = useRef(cache);
   const owner = useRef(DEMO);
   const [user, setUser] = useState<User | null>(null);
@@ -32,39 +57,65 @@ export function useWorkspace(initialDay: string) {
   const rejected = useRef(new Set<string>());
   const serialization = useRef<Promise<unknown>>(Promise.resolve());
 
-  const persist = useCallback(<T,>(callback: () => Promise<T>) => {
+  const persist = useCallback(<T>(callback: () => Promise<T>) => {
     const run = async (): Promise<T> => {
-      if (typeof navigator !== "undefined" && navigator.locks) return await navigator.locks.request("layers-pro-cache", callback);
+      if (typeof navigator !== "undefined" && navigator.locks)
+        return await navigator.locks.request("layers-pro-cache", callback);
       return callback();
     };
     const work = serialization.current.then(run, run);
     serialization.current = work.catch(() => undefined);
     return work;
   }, []);
-  const publish = useCallback((data: WorkspaceCache) => { cacheRef.current = data; setCache(data); }, []);
+  const publish = useCallback((data: WorkspaceCache) => {
+    cacheRef.current = data;
+    setCache(data);
+  }, []);
   const sync = useCallback(async () => {
     const id = owner.current;
     if (id === DEMO || syncingRef.current || !navigator.onLine) return;
     syncingRef.current = true;
     setSyncing(true);
     try {
-      let pending = (await readCache(id).catch(() => undefined) ?? cacheRef.current).outbox;
+      let pending = (
+        (await readCache(id).catch(() => undefined)) ?? cacheRef.current
+      ).outbox;
       do {
-        const split = pending[99]?.group && pending[99].group === pending[100]?.group ? 99 : 100;
+        const split =
+          pending[99]?.group && pending[99].group === pending[100]?.group
+            ? 99
+            : 100;
         const batch = pending.slice(0, split);
-        const res = await fetch("/api/records", batch.length ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ops: batch }) } : { cache: "no-store" });
+        const res = await fetch(
+          "/api/records",
+          batch.length
+            ? {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ops: batch }),
+              }
+            : { cache: "no-store" },
+        );
         const result = await res.json();
         if (!res.ok) {
-          if (res.status === 422 && owner.current === id) rejected.current = new Set(batch.map(op => op.id));
+          if (res.status === 422 && owner.current === id)
+            rejected.current = new Set(batch.map((op) => op.id));
           throw new Error(result.error || "Sync failed");
         }
         if (owner.current !== id) return;
-        const ids = new Set(batch.map(op => op.id));
+        const ids = new Set(batch.map((op) => op.id));
         await persist(async () => {
           if (owner.current !== id) return;
-          const current = await readCache(id).catch(() => undefined) ?? cacheRef.current;
-          const snapshot = (current.snapshot.syncedAt || "") > (result.syncedAt || "") ? current.snapshot : result;
-          const data: WorkspaceCache = { snapshot, outbox: current.outbox.filter(op => !ids.has(op.id)) };
+          const current =
+            (await readCache(id).catch(() => undefined)) ?? cacheRef.current;
+          const snapshot =
+            (current.snapshot.syncedAt || "") > (result.syncedAt || "")
+              ? current.snapshot
+              : result;
+          const data: WorkspaceCache = {
+            snapshot,
+            outbox: current.outbox.filter((op) => !ids.has(op.id)),
+          };
           await saveCache(id, data);
           if (owner.current === id) publish(data);
         });
@@ -73,7 +124,8 @@ export function useWorkspace(initialDay: string) {
       rejected.current.clear();
       setFailure("");
     } catch (e) {
-      if (owner.current === id) setFailure(e instanceof Error ? e.message : "Could not sync");
+      if (owner.current === id)
+        setFailure(e instanceof Error ? e.message : "Could not sync");
     } finally {
       syncingRef.current = false;
       setSyncing(false);
@@ -96,21 +148,37 @@ export function useWorkspace(initialDay: string) {
       }
     } catch {
       const local = localStorage.getItem(lastUserKey);
-      if (local) { account = JSON.parse(local); setConfigured(true); }
+      if (local) {
+        account = JSON.parse(local);
+        setConfigured(true);
+      }
     }
     const id = account?.id || DEMO;
     await persist(async () => {
       let stored = await readCache(id).catch(() => undefined);
-      if (account && !active && (!stored?.snapshot.syncedAt || daysBetween(stored.snapshot.syncedAt.slice(0, 10), dayNow()) > 30)) {
+      if (
+        account &&
+        !active &&
+        (!stored?.snapshot.syncedAt ||
+          daysBetween(stored.snapshot.syncedAt.slice(0, 10), dayNow()) > 30)
+      ) {
         stored = stored ? { ...stored, snapshot: empty } : undefined;
       }
       if (sequence !== accountRefresh.current) return;
       if (owner.current !== id) rejected.current.clear();
       owner.current = id;
       setUser(account);
-      setFailure(account && !active && navigator.onLine ? "Sign in again to resume sync." : "");
-      publish(stored ?? (account ? { snapshot: empty, outbox: [] } : sampleWorkspace()));
-      if (active && account) localStorage.setItem(lastUserKey, JSON.stringify(account));
+      setFailure(
+        account && !active && navigator.onLine
+          ? "Sign in again to resume sync."
+          : "",
+      );
+      publish(
+        stored ??
+          (account ? { snapshot: empty, outbox: [] } : sampleWorkspace()),
+      );
+      if (active && account)
+        localStorage.setItem(lastUserKey, JSON.stringify(account));
       setReady(true);
     });
     if (active) void sync();
@@ -119,17 +187,25 @@ export function useWorkspace(initialDay: string) {
   useEffect(() => {
     setOnline(navigator.onLine);
     void load();
-    const connected = () => { setOnline(true); void load(); };
+    const connected = () => {
+      setOnline(true);
+      void load();
+    };
     const disconnected = () => setOnline(false);
     window.addEventListener("online", connected);
     window.addEventListener("offline", disconnected);
-    const refresh = () => { if (document.visibilityState === "visible") void sync(); };
+    const refresh = () => {
+      if (document.visibilityState === "visible") void sync();
+    };
     document.addEventListener("visibilitychange", refresh);
     const interval = window.setInterval(refresh, 60_000);
-    if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator)
+      void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
     return () => {
-      window.removeEventListener("online", connected); window.removeEventListener("offline", disconnected);
-      document.removeEventListener("visibilitychange", refresh); window.clearInterval(interval);
+      window.removeEventListener("online", connected);
+      window.removeEventListener("offline", disconnected);
+      document.removeEventListener("visibilitychange", refresh);
+      window.clearInterval(interval);
     };
   }, [load, sync]);
 
@@ -137,25 +213,50 @@ export function useWorkspace(initialDay: string) {
     const id = owner.current;
     await persist(async () => {
       if (owner.current !== id) throw new Error("The current account changed");
-      const current = await readCache(id).catch(() => undefined) ?? cacheRef.current;
+      const current =
+        (await readCache(id).catch(() => undefined)) ?? cacheRef.current;
       const group = companion ? crypto.randomUUID() : undefined;
-      const ops = (companion ? [row, companion] : [row]).map(entry => ({ id: crypto.randomUUID(), row: entry, group }));
+      const ops = (companion ? [row, companion] : [row]).map((entry) => ({
+        id: crypto.randomUUID(),
+        row: entry,
+        group,
+      }));
       let data: WorkspaceCache;
       if (id === DEMO) {
         const audits: Audit[] = ops.map((op, index) => ({
-          id: op.id, record_id: op.row.id, changed_at: new Date().toISOString(),
-          previous: (index === 0 ? previous : undefined) ?? current.snapshot.rows.find(r => r.id === op.row.id) ?? null,
+          id: op.id,
+          record_id: op.row.id,
+          changed_at: new Date().toISOString(),
+          previous:
+            (index === 0 ? previous : undefined) ??
+            current.snapshot.rows.find((r) => r.id === op.row.id) ??
+            null,
           current: op.row,
         }));
-        const updated = new Set(ops.map(op => op.row.id));
-        data = { outbox: [], snapshot: { ...current.snapshot, rows: [...current.snapshot.rows.filter(r => !updated.has(r.id)), ...ops.map(op => op.row)], audits: [...audits, ...current.snapshot.audits] } };
+        const updated = new Set(ops.map((op) => op.row.id));
+        data = {
+          outbox: [],
+          snapshot: {
+            ...current.snapshot,
+            rows: [
+              ...current.snapshot.rows.filter((r) => !updated.has(r.id)),
+              ...ops.map((op) => op.row),
+            ],
+            audits: [...audits, ...current.snapshot.audits],
+          },
+        };
       } else {
         const outbox = [...current.outbox];
-        const revising = new Set(ops.map(op => op.row.id));
-        const stale = syncingRef.current ? [] : outbox.filter(item => revising.has(item.row.id) && rejected.current.has(item.id));
-        const excluded = new Set(stale.map(item => item.id));
-        const first = outbox.findIndex(item => excluded.has(item.id));
-        const retained = outbox.filter(item => !excluded.has(item.id));
+        const revising = new Set(ops.map((op) => op.row.id));
+        const stale = syncingRef.current
+          ? []
+          : outbox.filter(
+              (item) =>
+                revising.has(item.row.id) && rejected.current.has(item.id),
+            );
+        const excluded = new Set(stale.map((item) => item.id));
+        const first = outbox.findIndex((item) => excluded.has(item.id));
+        const retained = outbox.filter((item) => !excluded.has(item.id));
         retained.splice(first < 0 ? retained.length : first, 0, ...ops);
         data = { snapshot: current.snapshot, outbox: retained };
       }
@@ -166,7 +267,10 @@ export function useWorkspace(initialDay: string) {
   }
 
   async function logout() {
-    if (cacheRef.current.outbox.length) throw new Error("Sync your pending records before signing out on this device.");
+    if (cacheRef.current.outbox.length)
+      throw new Error(
+        "Sync your pending records before signing out on this device.",
+      );
     await session({ action: "logout" });
     const id = owner.current;
     ++accountRefresh.current;
@@ -175,5 +279,17 @@ export function useWorkspace(initialDay: string) {
     localStorage.removeItem(lastUserKey);
     await load();
   }
-  return { cache, user, configured, ready, online, syncing, failure, load, sync, add, logout };
+  return {
+    cache,
+    user,
+    configured,
+    ready,
+    online,
+    syncing,
+    failure,
+    load,
+    sync,
+    add,
+    logout,
+  };
 }

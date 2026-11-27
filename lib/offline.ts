@@ -10,7 +10,10 @@ function open(): Promise<IDBDatabase> {
     req.onerror = () => reject(req.error);
   });
 }
-async function transaction<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+async function transaction<T>(
+  mode: IDBTransactionMode,
+  action: (store: IDBObjectStore) => IDBRequest<T>,
+): Promise<T> {
   const db = await open();
   try {
     return await new Promise((resolve, reject) => {
@@ -20,8 +23,13 @@ async function transaction<T>(mode: IDBTransactionMode, action: (store: IDBObjec
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error);
     });
-  } finally { db.close(); }
+  } finally {
+    db.close();
+  }
 }
-export const readCache = (id: string): Promise<WorkspaceCache | undefined> => transaction("readonly", store => store.get(id));
-export const saveCache = (id: string, data: WorkspaceCache) => transaction("readwrite", store => store.put(data, id));
-export const clearCache = (id: string) => transaction("readwrite", store => store.delete(id));
+export const readCache = (id: string): Promise<WorkspaceCache | undefined> =>
+  transaction("readonly", (store) => store.get(id));
+export const saveCache = (id: string, data: WorkspaceCache) =>
+  transaction("readwrite", (store) => store.put(data, id));
+export const clearCache = (id: string) =>
+  transaction("readwrite", (store) => store.delete(id));
