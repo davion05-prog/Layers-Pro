@@ -35,7 +35,7 @@ The stack uses Next.js, React, TypeScript, Tailwind CSS, Supabase Auth and Postg
 
 ## Connect Supabase
 
-1. Create a Supabase project and apply `supabase/migrations/202611270001_layers.sql` using the SQL editor or `supabase db push` against your linked project.
+1. Create a Supabase project and apply `supabase/migrations/20261127170946_layers.sql` using the SQL editor or `supabase db push` against your linked project.
 2. Copy `.env.example` to `.env.local`. Set the Supabase URL, publishable key and server-only service-role key. Keep the service-role key out of the browser and Git.
 3. Under **Authentication → URL Configuration**, set the site URL and add the local and deployed `/auth/confirm` URLs as allowed redirects. Enable email confirmation. For confirmation from a different device, the Supabase email template can link to `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}`. Set up custom SMTP if Supabase’s default test-email restrictions prevent delivery to your test accounts.
 4. Set a short JWT lifetime appropriate to the deployment, such as 900 seconds. Supabase Auth handles password hashing, auth rate limits and refresh rotation. Next.js stores the session in HTTP-only, SameSite cookies, with Secure enabled in production. For a local HTTP test of the production build, set `ALLOW_INSECURE_COOKIES=true` locally only.
